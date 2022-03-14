@@ -1,0 +1,82 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+data:
+  reverse-proxy.conf: |
+    server {
+        listen 443 ssl;
+
+        if ($ssl_client_verify != "SUCCESS") { return 403; }
+        ssl_client_certificate /opt/certs/client.crt;
+        ssl_verify_depth 2;
+        ssl_verify_client on;
+
+        ssl_certificate     /opt/certs/server.crt;
+        ssl_certificate_key /opt/certs/server.key;
+
+        location / {
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header SSL_Client $ssl_client_s_dn;
+            proxy_set_header SSL_Client_Verify $ssl_client_verify;
+            proxy_pass http://httpbin.org;
+        }
+    }
+---    
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+    service: nginx
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: https
+    port: 443
+    targetPort: 443
+  selector:
+    app: nginx
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+        volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/reverse-proxy.conf 
+              subPath: reverse-proxy.conf
+              readOnly: true
+            - mountPath: /opt/certs
+              name: secret-volume
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: nginx-conf
+          items:
+            - key: reverse-proxy.conf
+              path: reverse-proxy.conf
+      - name: secret-volume
+        secret:
+           secretName: nginx-certs
